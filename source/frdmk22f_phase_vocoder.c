@@ -54,7 +54,8 @@ void applyEffect(uint16_t * rxBuffer, uint16_t * txBuffer, size_t bufferSize);
 /* Variable */
 extern codec_config_t boardCodecConfig;
 
-AT_NONCACHEABLE_SECTION_ALIGN(static uint8_t Buffer[BUFFER_NUMBER*BUFFER_SIZE], 4);
+AT_NONCACHEABLE_SECTION_ALIGN(static uint16_t rxBuffer[BUFFER_NUMBER*BUFFER_SIZE], 4);
+AT_NONCACHEABLE_SECTION_ALIGN(static uint16_t txBuffer[BUFFER_NUMBER*BUFFER_SIZE], 4);
 
 static uint32_t tx_index = 0U, rx_index = 0U;
 
@@ -66,6 +67,7 @@ volatile uint32_t emptyBlock = BUFFER_NUMBER;
 int main(void) {
 	codec_handle_t codecHandle = {0};
     sai_transfer_t xfer;
+    uint32_t delayCycle = 500000;
 
   	/* Init board hardware. */
     BOARD_InitBootPins();
@@ -76,43 +78,35 @@ int main(void) {
     /* Init audio codec */
     BOARD_InitAUDIOPeripheral();
 
-    // Setup effects
-
+    /* Init codec */
     CODEC_Init(&codecHandle, &boardCodecConfig);
     CODEC_SetFormat(&codecHandle, BOARD_SAI_AC_tx_format.masterClockHz, BOARD_SAI_AC_tx_format.sampleRate_Hz, BOARD_SAI_AC_tx_format.bitWidth);
 
-//    SGTL_EnableModule(&codecHandle, kSGTL_ModuleHP);
-//    SGTL_EnableModule(&codecHandle, kSGTL_ModuleLineIn);
-//    SGTL_EnableModule(&codecHandle, kSGTL_ModuleI2SIN);
-//    SGTL_EnableModule(&codecHandle, kSGTL_ModuleI2SOUT);
-//    SGTL_SetMute(&codecHandle, kSGTL_ModuleHP, false);
-//    SGTL_SetMute(&codecHandle, kSGTL_ModuleLineIn, false);
-//    SGTL_SetMute(&codecHandle, kSGTL_ModuleI2SIN, false);
-//    SGTL_SetMute(&codecHandle, kSGTL_ModuleI2SOUT, false);
-    SGTL_SetVolume(&codecHandle, kSGTL_ModuleHP, 0x30);
+    /* Turn off startup power supplies */
+//    SGTL_ModifyReg(&codecHandle, CHIP_ANA_POWER,
+//    		SGTL5000_STARTUP_POWERUP_CLR_MASK & SGTL5000_LINREG_SIMPLE_POWERUP_CLR_MASK, 0x0);
+    /* Set volumes */
+    SGTL_SetVolume(&codecHandle, kSGTL_ModuleHP, 0x50);
     SGTL_SetVolume(&codecHandle, kSGTL_ModuleLineIn, 0x00);
     SGTL_SetVolume(&codecHandle, kSGTL_ModuleI2SIN, 0x00);
     SGTL_SetVolume(&codecHandle, kSGTL_ModuleI2SOUT, 0x00);
+    /* Set auto volume control */
+    SGTL_ModifyReg(&codecHandle, SGTL5000_DAP_AVC_CTRL, SGTL5000_DAP_AVC_CTRL_EN_GET_MASK, 0x1);
 
     xfer.dataSize = BUFFER_SIZE;
 
-//    // Start as many receive as capable
-//	for (rx_index=0; rx_index < BUFFER_NUMBER; rx_index++) {
-//		if (rx_index == BUFFER_NUMBER) {
-//			rx_index = 0;
-//		}
-//		rxfer.data = (uint8_t *)rxBuffer + rx_index * BUFFER_SIZE;
-//		// If we run out of queue room, stop trying
-//		if (SAI_TransferReceiveEDMA(BOARD_SAI_AC_PERIPHERAL, &BOARD_eDMA_AC_rxHandle, &rxfer) != kStatus_Success) {
-//			break;
-//		}
-//	}
+
+    while (delayCycle)
+    {
+        __ASM("nop");
+        delayCycle--;
+    }
 
     while(1)
     {
     	if(emptyBlock > 0)
     	{
-    		xfer.data = Buffer + rx_index * BUFFER_SIZE;
+    		xfer.data = (uint8_t *)rxBuffer + rx_index * BUFFER_SIZE;
     		xfer.dataSize = BUFFER_SIZE;
     		if(kStatus_Success == SAI_TransferReceiveEDMA(BOARD_SAI_AC_PERIPHERAL, &BOARD_eDMA_AC_rxHandle, &xfer))
     		{
@@ -125,7 +119,7 @@ int main(void) {
     	}
     	if(emptyBlock < BUFFER_NUMBER)
     	{
-    		xfer.data = Buffer + tx_index * BUFFER_SIZE;
+    		xfer.data = (uint8_t *)rxBuffer + tx_index * BUFFER_SIZE;	//
     		xfer.dataSize = BUFFER_SIZE;
     		if(kStatus_Success == SAI_TransferSendEDMA(BOARD_SAI_AC_PERIPHERAL, &BOARD_eDMA_AC_txHandle, &xfer))
     		{
@@ -138,28 +132,6 @@ int main(void) {
     	}
     }
 }
-
-//void applyEffect(uint16_t * rxBuffer, uint16_t * txBuffer, size_t bufferSize) {
-//	// Compute solely from previous samples
-//	arm_mean_q15(previousSamples, SAMPLES, txBuffer);
-//	// Compute samples using both previousSamples and Buffer
-//	for (size_t i=1; i < SAMPLES; i++) {
-//		uint16_t temp = 0;
-//		size_t j;
-//		for (j=i; j < SAMPLES; j++) {
-//			temp += previousSamples[j]/SAMPLES;
-//		}
-//		for (; j < i; j++) {
-//			temp += rxBuffer[j-SAMPLES]/SAMPLES;
-//		}
-//		txBuffer[SAMPLES-j] = temp;
-//		previousSamples[i] = rxBuffer[BUFFER_SIZE-SAMPLES+i];
-//	}
-//	for (size_t i=SAMPLES; i < BUFFER_SIZE - SAMPLES; i++) {
-//		arm_mean_q15(&rxBuffer[i-SAMPLES], SAMPLES, &txBuffer[i-SAMPLES]);
-//	}
-//}
-
 
 void rxCallback(I2S_Type *base, sai_edma_handle_t *handle, status_t status, void *userData)
 {
