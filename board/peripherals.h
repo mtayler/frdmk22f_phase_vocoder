@@ -21,6 +21,7 @@
 #include "fsl_dmamux.h"
 #include "fsl_sai.h"
 #include "fsl_sai_edma.h"
+#include "fsl_lptmr.h"
 
 #if defined(__cplusplus)
 extern "C" {
@@ -124,6 +125,19 @@ extern "C" {
 /* Definition of the clock source frequency */
 #define BOARD_I2C_AC_CLK_FREQ CLOCK_GetFreq(BOARD_I2C_AC_CLOCK_SOURCE)
 
+/* Definitions for BOARD_InitLPTMRPeripheral functional group */
+/* BOARD_InitLPTMRPeripheral defines for LPTMR0 */
+/* Definition of peripheral ID */
+#define LPTMR_1_PERIPHERAL LPTMR0
+/* Definition of the clock source frequency */
+#define LPTMR_1_CLK_FREQ 8000000UL
+/* Definition of the prescaled clock source frequency */
+#define LPTMR_1_INPUT_FREQ 7812UL
+/* Definition of the timer period in us */
+#define LPTMR_1_USEC_COUNT 1000000UL
+/* Definition of the timer period in number of ticks */
+#define LPTMR_1_TICKS 7812UL
+
 /***********************************************************************************************************************
  * Global variables
  **********************************************************************************************************************/
@@ -148,6 +162,7 @@ extern edma_handle_t BOARD_SAI_AC_RX_Handle;
 extern sai_edma_handle_t BOARD_eDMA_AC_txHandle;
 extern sai_edma_handle_t BOARD_eDMA_AC_rxHandle;
 extern const i2c_master_config_t BOARD_I2C_AC_config;
+extern const lptmr_config_t LPTMR_1_config;
 
 /***********************************************************************************************************************
  * Callback functions
@@ -169,6 +184,7 @@ void BOARD_InitSDHCPeripheral(void);
 void BOARD_InitPOTPeripheral(void);
 void BOARD_InitLSENSEPeripheral(void);
 void BOARD_InitAUDIOPeripheral(void);
+void BOARD_InitLPTMRPeripheral(void);
 
 /***********************************************************************************************************************
  * BOARD_InitBootPeripherals function

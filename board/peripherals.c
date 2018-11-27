@@ -41,6 +41,8 @@ functionalGroups:
   description: Initialize I2C0 and I2S0 to the SGTL5000 audio codec chip
   id_prefix: BOARD_
   selectedCore: core0
+- name: BOARD_InitLPTMRPeripheral
+  selectedCore: core0
  * BE CAREFUL MODIFYING THIS COMMENT - IT IS YAML SETTINGS FOR TOOLS **********/
 
 /* TEXT BELOW IS USED AS SETTING FOR TOOLS *************************************
@@ -543,7 +545,7 @@ instance:
       - enableContinuousLinkMode: 'false'
       - enableHaltOnError: 'true'
       - enableRoundRobinArbitration: 'false'
-      - enableDebugMode: 'false'
+      - enableDebugMode: 'true'
     - edma_channels: []
  * BE CAREFUL MODIFYING THIS COMMENT - IT IS YAML SETTINGS FOR TOOLS **********/
 /* clang-format on */
@@ -551,7 +553,7 @@ const edma_config_t BOARD_eDMA_config = {
   .enableContinuousLinkMode = false,
   .enableHaltOnError = true,
   .enableRoundRobinArbitration = false,
-  .enableDebugMode = false
+  .enableDebugMode = true
 };
 
 void BOARD_eDMA_init(void) {
@@ -738,6 +740,57 @@ void BOARD_I2C_AC_init(void) {
 }
 
 /***********************************************************************************************************************
+ * BOARD_InitLPTMRPeripheral functional group
+ **********************************************************************************************************************/
+/***********************************************************************************************************************
+ * LPTMR_1 initialization code
+ **********************************************************************************************************************/
+/* clang-format off */
+/* TEXT BELOW IS USED AS SETTING FOR TOOLS *************************************
+instance:
+- name: 'LPTMR_1'
+- type: 'lptmr'
+- mode: 'LPTMR_GENERAL'
+- type_id: 'lptmr_2eeab91a1a42f8238f9ac768f18c65ae'
+- functional_group: 'BOARD_InitLPTMRPeripheral'
+- peripheral: 'LPTMR0'
+- config_sets:
+  - fsl_lptmr:
+    - enableInterrupt: 'false'
+    - interrupt:
+      - IRQn: 'LPTMR0_IRQn'
+      - enable_priority: 'false'
+      - enable_custom_name: 'false'
+    - lptmr_config:
+      - timerMode: 'kLPTMR_TimerModeTimeCounter'
+      - pinSelect: 'ALT.0'
+      - pinPolarity: 'kLPTMR_PinPolarityActiveHigh'
+      - enableFreeRunning: 'true'
+      - bypassPrescaler: 'false'
+      - prescalerClockSource: 'kLPTMR_PrescalerClock_3'
+      - clockSource: 'BOARD_BootClockHSRUN'
+      - value: 'kLPTMR_Prescale_Glitch_9'
+      - timerPeriod: '1000000 us'
+ * BE CAREFUL MODIFYING THIS COMMENT - IT IS YAML SETTINGS FOR TOOLS **********/
+/* clang-format on */
+const lptmr_config_t LPTMR_1_config = {
+  .timerMode = kLPTMR_TimerModeTimeCounter,
+  .pinSelect = kLPTMR_PinSelectInput_0,
+  .pinPolarity = kLPTMR_PinPolarityActiveHigh,
+  .enableFreeRunning = true,
+  .bypassPrescaler = false,
+  .prescalerClockSource = kLPTMR_PrescalerClock_3,
+  .value = kLPTMR_Prescale_Glitch_9
+};
+
+void LPTMR_1_init(void) {
+  /* Initialize the LPTMR */
+  LPTMR_Init(LPTMR_1_PERIPHERAL, &LPTMR_1_config);
+  /* Set LPTMR period to 1000000us */
+  LPTMR_SetTimerPeriod(LPTMR_1_PERIPHERAL, LPTMR_1_TICKS);
+}
+
+/***********************************************************************************************************************
  * Initialization functions
  **********************************************************************************************************************/
 void BOARD_InitPeripherals(void)
@@ -800,6 +853,12 @@ void BOARD_InitAUDIOPeripheral(void)
   BOARD_eDMA_init();
   BOARD_SAI_AC_init();
   BOARD_I2C_AC_init();
+}
+
+void BOARD_InitLPTMRPeripheral(void)
+{
+  /* Initialize components */
+  LPTMR_1_init();
 }
 
 /***********************************************************************************************************************
