@@ -1187,7 +1187,7 @@
                            <setting name="enableContinuousLinkMode" value="false"/>
                            <setting name="enableHaltOnError" value="true"/>
                            <setting name="enableRoundRobinArbitration" value="false"/>
-                           <setting name="enableDebugMode" value="true"/>
+                           <setting name="enableDebugMode" value="false"/>
                         </struct>
                         <array name="edma_channels"/>
                      </config_set>
@@ -1229,7 +1229,7 @@
                                  <struct name="sai_edma_handle">
                                     <setting name="enable_custom_name" value="true"/>
                                     <setting name="handle_custom_name" value="BOARD_eDMA_AC_txHandle"/>
-                                    <setting name="init_callback" value="true"/>
+                                    <setting name="init_callback" value="false"/>
                                     <setting name="callback_fcn" value="txCallback"/>
                                     <setting name="user_data" value=""/>
                                  </struct>
@@ -1286,12 +1286,6 @@
                      </config_set>
                   </instance>
                </instances>
-            </functional_group>
-            <functional_group name="BOARD_InitLPTMRPeripheral" uuid="da267f32-0da1-44a2-9864-df268290416b" called_from_default_init="false" id_prefix="" core="core0">
-               <description></description>
-               <options/>
-               <dependencies/>
-               <instances/>
             </functional_group>
          </functional_groups>
          <components>

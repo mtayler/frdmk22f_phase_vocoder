@@ -61,6 +61,8 @@
 #define configENABLE_BACKWARD_COMPATIBILITY     1
 #define configNUM_THREAD_LOCAL_STORAGE_POINTERS 5
 #define configUSE_APPLICATION_TASK_TAG          0
+#define configUSE_PORT_OPTIMISED_TASK_SELECTION	1
+#define configCHECK_FOR_STACK_OVERFLOW			0
 
 /* Memory allocation related definitions. */
 #define configSUPPORT_STATIC_ALLOCATION         0
@@ -77,9 +79,9 @@
 
 /* Run time and task stats gathering related definitions. */
 #define configGENERATE_RUN_TIME_STATS           0
-#define configUSE_TRACE_FACILITY                1
+#define configUSE_TRACE_FACILITY                0
 #define configUSE_STATS_FORMATTING_FUNCTIONS    0
-#define configRECORD_STACK_HIGH_ADDRESS			1
+#define configRECORD_STACK_HIGH_ADDRESS			0
 
 /* Co-routine related definitions. */
 #define configUSE_CO_ROUTINES                   0

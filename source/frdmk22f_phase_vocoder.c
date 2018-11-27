@@ -50,7 +50,7 @@
 
 /* TODO: insert other definitions and declarations here. */
 #define BOARD_I2C_AC_ADDR (0b0001010)
-#define BUFFER_SIZE (1024U)
+#define BUFFER_SIZE (2048U)
 #define BUFFER_NUMBER (4U)
 
 #define ARM_FFT (0)
@@ -62,8 +62,8 @@
 #define PROCESSING_QUEUE_LENGTH (SAI_XFER_QUEUE_SIZE)
 #define SEND_QUEUE_LENGTH (SAI_XFER_QUEUE_SIZE)	// should only ever get as many requests as receive queues
 
-#define TASK_PROCESSDATA_PRIORITY (configMAX_PRIORITIES - 2)
-#define TASK_SENDDATA_PRIORITY (configMAX_PRIORITIES - 1)
+#define TASK_PROCESSDATA_PRIORITY (configMAX_PRIORITIES)
+#define TASK_SENDDATA_PRIORITY (configMAX_PRIORITIES)
 
 /* Function prototypes */
 void task_processData(void *pvParameters);
@@ -72,10 +72,9 @@ void task_sendData(void *pvParameters);
 /* Variable */
 extern codec_config_t boardCodecConfig;
 
-TaskHandle_t taskHandle_sendData;
+//TaskHandle_t taskHandle_sendData;
 
-QueueHandle_t processQueue;
-QueueHandle_t sendQueue;
+volatile int16_t * receivedData = NULL;
 
 typedef struct _Message_data {
 	uint8_t messageID;
@@ -106,10 +105,10 @@ int main(void) {
 
     // Start tasks
     xTaskCreate(task_processData, "task_processData", configMINIMAL_STACK_SIZE, NULL, TASK_PROCESSDATA_PRIORITY, NULL);
-    xTaskCreate(task_sendData, "task_sendData", configMINIMAL_STACK_SIZE, NULL, TASK_SENDDATA_PRIORITY, &taskHandle_sendData);
+//    xTaskCreate(task_sendData, "task_sendData", configMINIMAL_STACK_SIZE, NULL, TASK_SENDDATA_PRIORITY, &taskHandle_sendData);
 
     // Notify send task all send queues free queues
-    xTaskNotify(taskHandle_sendData, SAI_XFER_QUEUE_SIZE, eSetValueWithOverwrite);
+//    xTaskNotify(taskHandle_sendData, SAI_XFER_QUEUE_SIZE, eSetValueWithOverwrite);
 
     // Make sure we can call ISR syscalls from DMA callbacks
     NVIC_SetPriority(DMA0_IRQn, configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY);
@@ -123,9 +122,10 @@ int main(void) {
 }
 
 void task_processData(void *pvParameters) {
-	Message_data msg;
+//	Message_data msg;
     arm_rfft_instance_q15 fftInst;
 	sai_transfer_t xfer;
+	int16_t * processData;
 
 	AT_NONCACHEABLE_SECTION_ALIGN(static int16_t rxBuffer[BUFFER_NUMBER*BUFFER_SIZE], 4);
 	AT_NONCACHEABLE_SECTION_ALIGN(static int16_t txBuffer[BUFFER_NUMBER*BUFFER_SIZE], 4);
@@ -136,10 +136,10 @@ void task_processData(void *pvParameters) {
     // Init RFFT instance
     arm_rfft_init_q15(&fftInst, BUFFER_SIZE, ARM_FFT, ARM_BIT_NORMAL);
 
-	// Configure queue
-	processQueue = xQueueCreate(PROCESSING_QUEUE_LENGTH, sizeof(Message_data));
-	configASSERT(processQueue != NULL);
-	vQueueAddToRegistry(sendQueue, "sendQueue");
+//	// Configure queue
+//	processQueue = xQueueCreate(PROCESSING_QUEUE_LENGTH, sizeof(Message_data));
+//	configASSERT(processQueue != NULL);
+//	vQueueAddToRegistry(sendQueue, "sendQueue");
 
     // Start as many receives as we can
 	xfer.dataSize = BUFFER_SIZE;
@@ -152,16 +152,16 @@ void task_processData(void *pvParameters) {
 	}
 
 	while (pdTRUE) {
-		// Wait for message of data to process
-		if (! xQueueReceive(processQueue, &msg, portMAX_DELAY)) {
-			// should change delay and do something eventually about timeout
-		}
+		// Wait for received data
+		while (receivedData == NULL);
+		// Save value
+		processData = receivedData;
 
-//		// Do processing and add to transmit buffer
-//		// FFT from rxBuffer to txBuffer
-//		fftInst.ifftFlagR = ARM_FFT;
-//		arm_rfft_q15(&fftInst, msg.data, &txBuffer[tx_index]);
-		arm_copy_q15(msg.data, &txBuffer[tx_index], BUFFER_SIZE);
+		// Do processing and add to transmit buffer
+		// FFT from rxBuffer to txBuffer
+		fftInst.ifftFlagR = ARM_FFT;
+//		arm_rfft_q15(&fftInst, processData, &txBuffer[tx_index]);
+		arm_copy_q15(processData, &txBuffer[tx_index], BUFFER_SIZE);
 
 		// Done with receive buffer, queue another
 		xfer.data = (uint8_t *)&rxBuffer[rx_index];
@@ -172,18 +172,17 @@ void task_processData(void *pvParameters) {
 		}
 		SAI_TransferReceiveEDMA(BOARD_SAI_AC_PERIPHERAL, &BOARD_eDMA_AC_rxHandle, &xfer);
 
-//		// Do IFFT in-place
+		/* Reset receivedData */
+		receivedData = NULL;
+
+		// Do IFFT in-place
 //		arm_rfft_q15(&fftInst, &txBuffer[tx_index], &txBuffer[tx_index]);
 
-		msg.data = txBuffer;
-		msg.index = tx_index;
-		msg.dataSize = BUFFER_SIZE;
-		// Notify transmit task of new data
-		if (! xQueueSendToBack(sendQueue, &msg, 0)) {
-			// Couldn't put data on queue, queue full.
-			// TODO: decide what to do here
-			configASSERT(!kStatus_Success);
-		}
+		// Put processed data on send queue
+		xfer.data = (uint8_t *)&txBuffer[tx_index];
+		xfer.dataSize = BUFFER_SIZE;
+		/* Loop until queue has space */
+		while(SAI_TransferSendEDMA(BOARD_SAI_AC_PERIPHERAL, &BOARD_eDMA_AC_txHandle, &xfer) == kStatus_SAI_QueueFull);
 		tx_index += BUFFER_SIZE;
 		if (tx_index == BUFFER_SIZE * BUFFER_NUMBER) {
 			tx_index = 0;
@@ -191,56 +190,28 @@ void task_processData(void *pvParameters) {
 	}
 }
 
-void task_sendData(void *pvParameters) {
-	Message_data msg;
-	sai_transfer_t xfer;
-
-	// Configure outgoing queue
-	sendQueue = xQueueCreate(SEND_QUEUE_LENGTH, sizeof(Message_data));
-	configASSERT(sendQueue != NULL);
-	vQueueAddToRegistry(sendQueue, "sendQueue");
-
-	while (pdTRUE) {
-		// Wait for free transmit queue space
-		if (! ulTaskNotifyTake(pdFALSE, portMAX_DELAY)) {
-			// change to handle errors with timeout
-		}
-
-		// Wait for data to send
-		if (! xQueueReceive(sendQueue, &msg, portMAX_DELAY)) {
-			// handle errors with timeout
-		}
-
-		xfer.data = (uint8_t *)&msg.data[msg.index];
-		xfer.dataSize = msg.dataSize;
-		status_t status = SAI_TransferSendEDMA(BOARD_SAI_AC_PERIPHERAL, &BOARD_eDMA_AC_txHandle, &xfer);
-		if (status != kStatus_Success) {
-			// something happened, shouldn't fail
-			configASSERT(!kStatus_Success);
-		}
-	}
-}
-
 void rxCallback(I2S_Type *base, sai_edma_handle_t *handle, status_t status, void *userData)
 {
-	static Message_data msg;
+//	static Message_data msg;
 	if (status == kStatus_SAI_RxError) {
 		// deal with error
 	}
 	// TODO: Need to deal with wrapping circular buffer here
-	msg.data = (int16_t *)handle->saiQueue[handle->queueDriver].data;
-	msg.dataSize = handle->transferSize[handle->queueDriver];
-	if (! xQueueSendToBackFromISR(processQueue, &msg, NULL)) {
-		// Queue was full
-		configASSERT(pdFALSE);
-	}
+	/* Message queues too slow */
+//	msg.data = (int16_t *)handle->saiQueue[handle->queueDriver].data;
+//	msg.dataSize = handle->transferSize[handle->queueDriver];
+//	if (! xQueueSendToBackFromISR(processQueue, &msg, NULL)) {
+//		// Queue was full
+//		configASSERT(pdFALSE);
+//	}
+	receivedData = (int16_t *)handle->saiQueue[handle->queueDriver].data;
 }
 
-void txCallback(I2S_Type *base, sai_edma_handle_t *handle, status_t status, void *userData)
-{
-	if (status == kStatus_SAI_TxError) {
-		// deal with error
-	}
-	// Tell send task there is more room on send queue
-	vTaskNotifyGiveFromISR(taskHandle_sendData, NULL);
-}
+//void txCallback(I2S_Type *base, sai_edma_handle_t *handle, status_t status, void *userData)
+//{
+//	if (status == kStatus_SAI_TxError) {
+//		// deal with error
+//	}
+//	// Tell send task there is more room on send queue
+//	vTaskNotifyGiveFromISR(taskHandle_sendData, NULL);
+//}
