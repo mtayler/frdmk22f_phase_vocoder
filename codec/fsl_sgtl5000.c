@@ -58,20 +58,6 @@ status_t SGTL_Init(codec_handle_t *handle, void *codec_config)
     /* NULL pointer means default setting. */
     if (config == NULL)
     {
-    	// Turn off startup power supplies to save power (Clear bit 12 and 13)
-    	SGTL_WriteReg(handle, CHIP_ANA_POWER, 0x4260);
-
-    	// Configure the charge pump to use the VDDIO rail (set bit 5 and bit 6)
-    	SGTL_WriteReg(handle, CHIP_LINREG_CTRL, 0x006C);
-
-        /* Configure slow ramp up rate to minimize pop (bit 0) */
-        SGTL_WriteReg(handle, CHIP_REF_CTRL, 0x004F);
-
-        // Enable short detect mode for headphone left/right
-        // and center channel and set short detect current trip level
-        // to 75 mA
-        SGTL_WriteReg(handle, CHIP_SHORT_CTRL, 0x1106);
-
         /* Power up Inputs/Outputs/Digital Blocks
            Power up LINEOUT, HP, ADC, DAC. */
         SGTL_WriteReg(handle, CHIP_ANA_POWER, 0x6AFFU);

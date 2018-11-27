@@ -714,6 +714,8 @@ BOARD_InitAudioPins:
   - {pin_num: '38', peripheral: I2C0, signal: SDA, pin_signal: ADC0_SE13/PTB3/I2C0_SDA/UART0_CTS_b/FTM0_FLT0, open_drain: enable, pull_select: up, pull_enable: enable}
   - {pin_num: '50', peripheral: I2S0, signal: RXD0, pin_signal: PTC5/LLWU_P9/SPI0_SCK/LPTMR0_ALT2/I2S0_RXD0/FB_AD10/CMP0_OUT/FTM0_CH2, identifier: ''}
   - {pin_num: '53', peripheral: I2S0, signal: MCLK, pin_signal: ADC1_SE4b/CMP0_IN2/PTC8/FTM3_CH4/I2S0_MCLK/FB_AD7, identifier: ''}
+  - {pin_num: '54', peripheral: I2S0, signal: RX_BCLK, pin_signal: ADC1_SE5b/CMP0_IN3/PTC9/FTM3_CH5/I2S0_RX_BCLK/FB_AD6/FTM2_FLT0}
+  - {pin_num: '52', peripheral: I2S0, signal: RX_FS, pin_signal: CMP0_IN1/PTC7/SPI0_SIN/USB_SOF_OUT/I2S0_RX_FS/FB_AD8}
  * BE CAREFUL MODIFYING THIS COMMENT - IT IS YAML SETTINGS FOR TOOLS ***********
  */
 /* clang-format on */
@@ -775,8 +777,14 @@ void BOARD_InitAudioPins(void)
     /* PORTC5 (pin 50) is configured as I2S0_RXD0 */
     PORT_SetPinMux(PORTC, 5U, kPORT_MuxAlt4);
 
+    /* PORTC7 (pin 52) is configured as I2S0_RX_FS */
+    PORT_SetPinMux(PORTC, 7U, kPORT_MuxAlt4);
+
     /* PORTC8 (pin 53) is configured as I2S0_MCLK */
     PORT_SetPinMux(PORTC, 8U, kPORT_MuxAlt4);
+
+    /* PORTC9 (pin 54) is configured as I2S0_RX_BCLK */
+    PORT_SetPinMux(PORTC, 9U, kPORT_MuxAlt4);
 }
 /***********************************************************************************************************************
  * EOF

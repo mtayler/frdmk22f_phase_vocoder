@@ -45,7 +45,7 @@
 
 /* TODO: insert other definitions and declarations here. */
 #define BOARD_I2C_AC_ADDR (0b0001010)
-#define BUFFER_SIZE (1024U)
+#define BUFFER_SIZE (512U)
 #define BUFFER_NUMBER (4U)
 
 /* Function prototypes */
@@ -67,7 +67,6 @@ volatile uint32_t emptyBlock = BUFFER_NUMBER;
 int main(void) {
 	codec_handle_t codecHandle = {0};
     sai_transfer_t xfer;
-    uint32_t delayCycle = 500000;
 
   	/* Init board hardware. */
     BOARD_InitBootPins();
@@ -77,36 +76,16 @@ int main(void) {
     BOARD_InitDebugConsole();
     /* Init audio codec */
     BOARD_InitAUDIOPeripheral();
-
     /* Init codec */
     CODEC_Init(&codecHandle, &boardCodecConfig);
-    CODEC_SetFormat(&codecHandle, BOARD_SAI_AC_tx_format.masterClockHz, BOARD_SAI_AC_tx_format.sampleRate_Hz, BOARD_SAI_AC_tx_format.bitWidth);
-
-    /* Turn off startup power supplies */
-//    SGTL_ModifyReg(&codecHandle, CHIP_ANA_POWER,
-//    		SGTL5000_STARTUP_POWERUP_CLR_MASK & SGTL5000_LINREG_SIMPLE_POWERUP_CLR_MASK, 0x0);
-    /* Set volumes */
-    SGTL_SetVolume(&codecHandle, kSGTL_ModuleHP, 0x50);
-    SGTL_SetVolume(&codecHandle, kSGTL_ModuleLineIn, 0x00);
-    SGTL_SetVolume(&codecHandle, kSGTL_ModuleI2SIN, 0x00);
-    SGTL_SetVolume(&codecHandle, kSGTL_ModuleI2SOUT, 0x00);
-    /* Set auto volume control */
-    SGTL_ModifyReg(&codecHandle, SGTL5000_DAP_AVC_CTRL, SGTL5000_DAP_AVC_CTRL_EN_GET_MASK, 0x1);
-
-    xfer.dataSize = BUFFER_SIZE;
-
-
-    while (delayCycle)
-    {
-        __ASM("nop");
-        delayCycle--;
-    }
+    CODEC_SetFormat(&codecHandle, BOARD_SAI_AC_RX_MCLK_SOURCE_CLOCK_HZ, BOARD_SAI_AC_rx_format.sampleRate_Hz, BOARD_SAI_AC_rx_format.bitWidth);
+    SGTL_SetVolume(&codecHandle, kSGTL_ModuleHP, 0x20);
 
     while(1)
     {
     	if(emptyBlock > 0)
     	{
-    		xfer.data = (uint8_t *)rxBuffer + rx_index * BUFFER_SIZE;
+    		xfer.data = (uint8_t *)(rxBuffer + rx_index * BUFFER_SIZE);
     		xfer.dataSize = BUFFER_SIZE;
     		if(kStatus_Success == SAI_TransferReceiveEDMA(BOARD_SAI_AC_PERIPHERAL, &BOARD_eDMA_AC_rxHandle, &xfer))
     		{
@@ -119,15 +98,20 @@ int main(void) {
     	}
     	if(emptyBlock < BUFFER_NUMBER)
     	{
-    		xfer.data = (uint8_t *)rxBuffer + tx_index * BUFFER_SIZE;	//
-    		xfer.dataSize = BUFFER_SIZE;
-    		if(kStatus_Success == SAI_TransferSendEDMA(BOARD_SAI_AC_PERIPHERAL, &BOARD_eDMA_AC_txHandle, &xfer))
-    		{
-    			tx_index++;
-    		}
-    		if(tx_index == BUFFER_NUMBER)
-    		{
-    			tx_index = 0U;
+    		// If queue not full
+    		if (!BOARD_eDMA_AC_txHandle.saiQueue[BOARD_eDMA_AC_txHandle.queueUser].data) {
+        		// Copy from rxBuffer to txBuffer
+    			arm_copy_q15(rxBuffer + tx_index * BUFFER_SIZE, txBuffer + tx_index * BUFFER_SIZE, BUFFER_SIZE);
+    			xfer.data = (uint8_t *)(txBuffer + tx_index * BUFFER_SIZE);	//
+    			xfer.dataSize = BUFFER_SIZE;
+    			if(kStatus_Success == SAI_TransferSendEDMA(BOARD_SAI_AC_PERIPHERAL, &BOARD_eDMA_AC_txHandle, &xfer))
+    			{
+    				tx_index++;
+    			}
+    			if(tx_index == BUFFER_NUMBER)
+    			{
+    				tx_index = 0U;
+    			}
     		}
     	}
     }

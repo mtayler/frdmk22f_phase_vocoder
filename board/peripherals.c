@@ -545,7 +545,6 @@ instance:
       - enableRoundRobinArbitration: 'false'
       - enableDebugMode: 'false'
     - edma_channels: []
-    - quick_selection: 'default'
  * BE CAREFUL MODIFYING THIS COMMENT - IT IS YAML SETTINGS FOR TOOLS **********/
 /* clang-format on */
 const edma_config_t BOARD_eDMA_config = {

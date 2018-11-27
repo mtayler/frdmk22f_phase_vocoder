@@ -1,0 +1,7 @@
+ExitOnError 1
+r
+h
+loadfile "/Users/mtayler/Documents/MCUXpresso/workspace/frdmk22f_phase_vocoder/Debug/frdmk22f_phase_vocoder.hex"
+qc
+
+qc
