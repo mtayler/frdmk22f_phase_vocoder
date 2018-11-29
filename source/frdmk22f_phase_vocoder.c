@@ -98,7 +98,7 @@ void main(void) {
     /* Init codec */
     CODEC_Init(&codecHandle, &boardCodecConfig);
     CODEC_SetFormat(&codecHandle, BOARD_SAI_AC_RX_MCLK_SOURCE_CLOCK_HZ, BOARD_SAI_AC_rx_format.sampleRate_Hz, BOARD_SAI_AC_rx_format.bitWidth);
-    SGTL_SetVolume(&codecHandle, kSGTL_ModuleHP, 0x20);
+    SGTL_SetVolume(&codecHandle, kSGTL_ModuleHP, 0x30);
 
     // Init RFFT instance
     arm_rfft_fast_init_f32(&fftInst, BUFFER_SIZE >> 1U);
@@ -170,6 +170,7 @@ void rxCallback(I2S_Type *base, sai_edma_handle_t *handle, status_t status, void
 }
 
 
+// Convert (int16_t) LRLRLRLR.... to (float32_t) LLLL...RRRR...
 void int16_packed_to_float(int16_t * pSrc, float32_t * pDst, uint32_t blockSize) {
 	int16_t *pIn = pSrc++;                           /* Src pointer and add 1 index to original */
 	uint32_t blkCnt;                               /* loop counter */
@@ -236,6 +237,7 @@ void int16_packed_to_float(int16_t * pSrc, float32_t * pDst, uint32_t blockSize)
 	}
 }
 
+// Convert (float32_t) LLLL...RRRR... to (int16_t) LRLRLRLR....
 void float_to_int16_packed(float32_t * pSrc, int16_t * pDst, uint32_t blockSize) {
 	int16_t *pOut = pDst++;                        /* Dst pointer and add 1 index to original */
 	uint32_t blkCnt;                               /* loop counter */
@@ -278,10 +280,10 @@ void float_to_int16_packed(float32_t * pSrc, int16_t * pDst, uint32_t blockSize)
 	{
 		/* C = A * 32768 */
 		/* convert from float to int16 and then store the results in the destination buffer */
-		*pDst = (int16_t)(*pSrc++); pOut += 2U;
-		*pDst = (int16_t)(*pSrc++); pOut += 2U;
-		*pDst = (int16_t)(*pSrc++); pOut += 2U;
-		*pDst = (int16_t)(*pSrc++); pOut += 2U;
+		*pDst = (int16_t)(*pSrc++); pDst += 2U;
+		*pDst = (int16_t)(*pSrc++); pDst += 2U;
+		*pDst = (int16_t)(*pSrc++); pDst += 2U;
+		*pDst = (int16_t)(*pSrc++); pDst += 2U;
 
 		/* Decrement the loop counter */
 		blkCnt--;
@@ -291,7 +293,7 @@ void float_to_int16_packed(float32_t * pSrc, int16_t * pDst, uint32_t blockSize)
 
 		/* C = A * 32768 */
 		/* convert from float to int16 and then store the results in the destination buffer */
-		*pDst = (int16_t)(*pSrc++); pOut += 2U;
+		*pDst = (int16_t)(*pSrc++); pDst += 2U;
 
 		/* Decrement the loop counter */
 		blkCnt--;
