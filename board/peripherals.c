@@ -586,7 +586,7 @@ instance:
           - sampleRate_Hz: 'kSAI_SampleRate44100Hz'
           - bitWidth: 'kSAI_WordWidth16bits'
           - stereo: 'kSAI_Stereo'
-          - isFrameSyncCompact: 'false'
+          - isFrameSyncCompact: 'true'
           - watermark: '4'
           - channelMask: 'kSAI_Channel0Mask'
         - edma_group:
@@ -610,7 +610,7 @@ instance:
           - sampleRate_Hz: 'kSAI_SampleRate44100Hz'
           - bitWidth: 'kSAI_WordWidth16bits'
           - stereo: 'kSAI_Stereo'
-          - isFrameSyncCompact: 'false'
+          - isFrameSyncCompact: 'true'
           - watermark: '4'
           - channelMask: 'kSAI_Channel0Mask'
         - edma_group:
@@ -646,7 +646,7 @@ sai_transfer_format_t BOARD_SAI_AC_tx_format = {
   .watermark = 4U,
   .channel = 0U,
   .protocol = kSAI_BusI2S,
-  .isFrameSyncCompact = false
+  .isFrameSyncCompact = true
 };
 /* BOARD_SAI_AC Rx configuration */
 const sai_config_t BOARD_SAI_AC_rx_config = {
@@ -667,7 +667,7 @@ sai_transfer_format_t BOARD_SAI_AC_rx_format = {
   .watermark = 4U,
   .channel = 0U,
   .protocol = kSAI_BusI2S,
-  .isFrameSyncCompact = false
+  .isFrameSyncCompact = true
 };
 edma_handle_t BOARD_SAI_AC_TX_Handle;
 edma_handle_t BOARD_SAI_AC_RX_Handle;

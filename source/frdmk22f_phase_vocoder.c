@@ -69,10 +69,6 @@ AT_NONCACHEABLE_SECTION_ALIGN(static int16_t rxBuffer[BUFFER_NUMBER*BUFFER_SIZE]
 AT_NONCACHEABLE_SECTION_ALIGN(static int16_t txBuffer[BUFFER_NUMBER*BUFFER_SIZE], 4) __BSS(SRAM_LOWER);
 AT_NONCACHEABLE_SECTION_ALIGN(static float32_t fftBuffer[FFT_BUFFER_SIZE], 4) __BSS(SRAM_UPPER);
 
-static int16_t * dataPointers[BUFFER_NUMBER] __BSS(SRAM_UPPER) = {0};
-
-//TaskHandle_t taskHandle_sendData;
-
 volatile int16_t * receivedData = NULL;
 
 /*
@@ -85,7 +81,6 @@ void main(void) {
 	volatile bool done = false;
 	int16_t * receivedBuffer;	// Used to save receivedData to prevent it changing while being used
 
-	size_t rx_index = 0;
 	size_t tx_index = 0;
 
   	/* Init board hardware. */
@@ -107,17 +102,14 @@ void main(void) {
     // Start as many receives as we can
 	xfer.dataSize = BUFFER_SIZE*sizeof(int16_t);	// Size in bytes
 	// Don't wrap rx_index here because we'll only go until we reach buffer size, and deal with it later
-    for (rx_index=0; rx_index < BUFFER_NUMBER; rx_index++) {
+    for (size_t rx_index=0; rx_index < BUFFER_NUMBER; rx_index++) {
     	xfer.data = (uint8_t *)&rxBuffer[rx_index*BUFFER_SIZE];
-    	dataPointers[rx_index] = (int16_t *)xfer.data;
-		BOARD_eDMA_AC_rxHandle.userData = &dataPointers[rx_index];
+		BOARD_eDMA_AC_rxHandle.userData = (int16_t *)xfer.data;
     	if (SAI_TransferReceiveEDMA(BOARD_SAI_AC_PERIPHERAL, &BOARD_eDMA_AC_rxHandle, &xfer) == kStatus_SAI_QueueFull) {
     		// If the receive queue is full, we've started as many as we can
     		break;
     	}
     }
-    // Make sure rx_index wraps
-    rx_index %= BUFFER_NUMBER;
 
 	while (!done) {
 		// Wait for received data
@@ -128,12 +120,12 @@ void main(void) {
 
 		// Convert from uint16_t to float going from rxBuffer to fftBuffer
 		arm_q15_to_float((q15_t *)receivedBuffer, fftBuffer, BUFFER_SIZE);
+//		arm_copy_q15(receivedBuffer, &txBuffer[tx_index], BUFFER_SIZE);
 
-		// Done with receive buffer, queue another
-		BOARD_eDMA_AC_rxHandle.userData = &dataPointers[rx_index];
-		xfer.data = (uint8_t *)&rxBuffer[rx_index*BUFFER_SIZE];
+		// Done with receive buffer, queue another (finishes sequentially)
+		xfer.data = (uint8_t *)receivedBuffer;
 		xfer.dataSize = BUFFER_SIZE*sizeof(int16_t);	// Size in bytes
-		rx_index = (rx_index + 1) % BUFFER_NUMBER;
+		BOARD_eDMA_AC_rxHandle.userData = xfer.data;
 
 		SAI_TransferReceiveEDMA(BOARD_SAI_AC_PERIPHERAL, &BOARD_eDMA_AC_rxHandle, &xfer);
 		// FFT in-place
@@ -166,7 +158,7 @@ void rxCallback(I2S_Type *base, sai_edma_handle_t *handle, status_t status, void
 //		// Queue was full
 //		configASSERT(pdFALSE);
 //	}
-	receivedData = *((volatile int16_t **)userData);
+	receivedData = (volatile int16_t *)userData;
 }
 
 //void txCallback(I2S_Type *base, sai_edma_handle_t *handle, status_t status, void *userData)
