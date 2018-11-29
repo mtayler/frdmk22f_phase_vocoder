@@ -33,6 +33,8 @@
  * @brief   Application entry point.
  */
 #include <stdio.h>
+#include <stdint.h>
+#include <math.h>
 #include <cr_section_macros.h>
 #include "board.h"
 #include "peripherals.h"
@@ -41,7 +43,6 @@
 #include "MK22F51212.h"
 #include "fsl_debug_console.h"
 /* TODO: insert other include files here. */
-#include <math.h>
 #include "arm_math.h"
 #include "fsl_sgtl5000.h"
 
@@ -50,6 +51,8 @@
 #define BUFFER_SIZE (4096U)
 #define BUFFER_NUMBER (4U)
 #define FFT_BUFFER_SIZE (BUFFER_SIZE*2)
+
+#define M_PI (3.14159265359f)
 
 #define ARM_FFT (0)
 #define ARM_IFFT (1)
@@ -118,9 +121,10 @@ void main(void) {
 
 	while (!done) {
 		// Wait for received data
+
 		while (receivedData == NULL);
 		// Do processing and add to transmit buffer
-		receivedBuffer = receivedData;
+		receivedBuffer = (int16_t *)receivedData;
 		receivedData = NULL;
 
 		// Convert from uint16_t to float going from rxBuffer to fftBuffer
@@ -137,6 +141,9 @@ void main(void) {
 		// FFT in-place
 		arm_rfft_fast_f32(&fftInst, fftBuffer, fftBuffer, ARM_FFT);
 		arm_rfft_fast_f32(&fftInst, &fftBuffer[FFT_BUFFER_SIZE >> 1U], &fftBuffer[FFT_BUFFER_SIZE >> 1U], ARM_FFT);
+		for (size_t i=1; i < BUFFER_SIZE; i+=2) {
+			fftBuffer[i] = (float)rand()/(float)(RAND_MAX/(2*M_PI));
+		}
 		// IFFT in-place
 		arm_rfft_fast_f32(&fftInst, fftBuffer, fftBuffer, ARM_IFFT);
 		arm_rfft_fast_f32(&fftInst, &fftBuffer[FFT_BUFFER_SIZE >> 1U], &fftBuffer[FFT_BUFFER_SIZE >> 1U], ARM_IFFT);
