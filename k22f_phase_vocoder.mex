@@ -1185,7 +1185,7 @@
                      <config_set name="fsl_edma">
                         <struct name="common_settings">
                            <setting name="enableContinuousLinkMode" value="false"/>
-                           <setting name="enableHaltOnError" value="true"/>
+                           <setting name="enableHaltOnError" value="false"/>
                            <setting name="enableRoundRobinArbitration" value="false"/>
                            <setting name="enableDebugMode" value="false"/>
                         </struct>

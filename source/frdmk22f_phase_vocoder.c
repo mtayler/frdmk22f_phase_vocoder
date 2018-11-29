@@ -33,62 +33,60 @@
  * @brief   Application entry point.
  */
 #include <stdio.h>
+#include <cr_section_macros.h>
 #include "board.h"
 #include "peripherals.h"
 #include "pin_mux.h"
 #include "clock_config.h"
 #include "MK22F51212.h"
-#include "arm_math.h"
 #include "fsl_debug_console.h"
 /* TODO: insert other include files here. */
-
-#include "FreeRTOS.h"
-#include "task.h"
-#include "queue.h"
-
+#include <math.h>
+#include "arm_math.h"
 #include "fsl_sgtl5000.h"
 
 /* TODO: insert other definitions and declarations here. */
 #define BOARD_I2C_AC_ADDR (0b0001010)
-#define BUFFER_SIZE (2048U)
+#define BUFFER_SIZE (4096U)
 #define BUFFER_NUMBER (4U)
+#define FFT_BUFFER_SIZE (BUFFER_SIZE*2)
 
 #define ARM_FFT (0)
 #define ARM_IFFT (1)
 
-#define ARM_BIT_NORMAL (1)
-#define ARM_BIT_REVERSE (0)
-
-#define PROCESSING_QUEUE_LENGTH (SAI_XFER_QUEUE_SIZE)
-#define SEND_QUEUE_LENGTH (SAI_XFER_QUEUE_SIZE)	// should only ever get as many requests as receive queues
-
-#define TASK_PROCESSDATA_PRIORITY (configMAX_PRIORITIES)
-#define TASK_SENDDATA_PRIORITY (configMAX_PRIORITIES)
+#define ARM_BIT_NORMAL (0)
+#define ARM_BIT_REVERSE (1)
 
 /* Function prototypes */
-void task_processData(void *pvParameters);
-void task_sendData(void *pvParameters);
+void main(void) __SECTION(text, SRAM_UPPER);
+void rxCallback(I2S_Type *base, sai_edma_handle_t *handle, status_t status, void *userData) __RAMFUNC(SRAM_UPPER);
 
 /* Variable */
 extern codec_config_t boardCodecConfig;
+
+// Data buffers
+AT_NONCACHEABLE_SECTION_ALIGN(static int16_t rxBuffer[BUFFER_NUMBER*BUFFER_SIZE], 4) __BSS(SRAM_LOWER);
+AT_NONCACHEABLE_SECTION_ALIGN(static int16_t txBuffer[BUFFER_NUMBER*BUFFER_SIZE], 4) __BSS(SRAM_LOWER);
+AT_NONCACHEABLE_SECTION_ALIGN(static float32_t fftBuffer[FFT_BUFFER_SIZE], 4) __BSS(SRAM_UPPER);
+
+static int16_t * dataPointers[BUFFER_NUMBER] __BSS(SRAM_UPPER) = {0};
 
 //TaskHandle_t taskHandle_sendData;
 
 volatile int16_t * receivedData = NULL;
 
-typedef struct _Message_data {
-	uint8_t messageID;
-	int16_t * data;
-	size_t index;
-	size_t dataSize;
-	/* Circular buffer somehow? */
-} Message_data;
-
 /*
  * @brief   Application entry point.
  */
-int main(void) {
+void main(void) {
 	codec_handle_t codecHandle = {0};
+	sai_transfer_t xfer;
+	arm_rfft_fast_instance_f32 fftInst;
+	volatile bool done = false;
+	int16_t * receivedBuffer;	// Used to save receivedData to prevent it changing while being used
+
+	size_t rx_index = 0;
+	size_t tx_index = 0;
 
   	/* Init board hardware. */
     BOARD_InitBootPins();
@@ -103,99 +101,63 @@ int main(void) {
     CODEC_SetFormat(&codecHandle, BOARD_SAI_AC_RX_MCLK_SOURCE_CLOCK_HZ, BOARD_SAI_AC_rx_format.sampleRate_Hz, BOARD_SAI_AC_rx_format.bitWidth);
     SGTL_SetVolume(&codecHandle, kSGTL_ModuleHP, 0x20);
 
-    // Start tasks
-    xTaskCreate(task_processData, "task_processData", configMINIMAL_STACK_SIZE, NULL, TASK_PROCESSDATA_PRIORITY, NULL);
-//    xTaskCreate(task_sendData, "task_sendData", configMINIMAL_STACK_SIZE, NULL, TASK_SENDDATA_PRIORITY, &taskHandle_sendData);
-
-    // Notify send task all send queues free queues
-//    xTaskNotify(taskHandle_sendData, SAI_XFER_QUEUE_SIZE, eSetValueWithOverwrite);
-
-    // Make sure we can call ISR syscalls from DMA callbacks
-    NVIC_SetPriority(DMA0_IRQn, configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY);
-    NVIC_SetPriority(DMA1_IRQn, configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY);
-
-    vTaskStartScheduler();
-
-    configASSERT(pdFALSE);	// shouldn't get here
-    while (1) {
-    }
-}
-
-void task_processData(void *pvParameters) {
-//	Message_data msg;
-    arm_rfft_instance_q15 fftInst;
-	sai_transfer_t xfer;
-	int16_t * processData;
-
-	AT_NONCACHEABLE_SECTION_ALIGN(static int16_t rxBuffer[BUFFER_NUMBER*BUFFER_SIZE], 4);
-	AT_NONCACHEABLE_SECTION_ALIGN(static int16_t txBuffer[BUFFER_NUMBER*BUFFER_SIZE], 4);
-
-	size_t rx_index = 0;
-	size_t tx_index = 0;
-
     // Init RFFT instance
-    arm_rfft_init_q15(&fftInst, BUFFER_SIZE, ARM_FFT, ARM_BIT_NORMAL);
-
-//	// Configure queue
-//	processQueue = xQueueCreate(PROCESSING_QUEUE_LENGTH, sizeof(Message_data));
-//	configASSERT(processQueue != NULL);
-//	vQueueAddToRegistry(sendQueue, "sendQueue");
+    arm_rfft_fast_init_f32(&fftInst, BUFFER_SIZE);
 
     // Start as many receives as we can
-	xfer.dataSize = BUFFER_SIZE;
-    for (rx_index=0; rx_index < BUFFER_SIZE * BUFFER_NUMBER && rx_index/BUFFER_SIZE < SAI_XFER_QUEUE_SIZE; rx_index += BUFFER_SIZE) {
-    	xfer.data = (uint8_t *)&rxBuffer[rx_index];
-    	SAI_TransferReceiveEDMA(BOARD_SAI_AC_PERIPHERAL, &BOARD_eDMA_AC_rxHandle, &xfer);
+	xfer.dataSize = BUFFER_SIZE*sizeof(int16_t);	// Size in bytes
+	// Don't wrap rx_index here because we'll only go until we reach buffer size, and deal with it later
+    for (rx_index=0; rx_index < BUFFER_NUMBER; rx_index++) {
+    	xfer.data = (uint8_t *)&rxBuffer[rx_index*BUFFER_SIZE];
+    	dataPointers[rx_index] = (int16_t *)xfer.data;
+		BOARD_eDMA_AC_rxHandle.userData = &dataPointers[rx_index];
+    	if (SAI_TransferReceiveEDMA(BOARD_SAI_AC_PERIPHERAL, &BOARD_eDMA_AC_rxHandle, &xfer) == kStatus_SAI_QueueFull) {
+    		// If the receive queue is full, we've started as many as we can
+    		break;
+    	}
     }
-	if (rx_index == BUFFER_SIZE * BUFFER_NUMBER) {
-		rx_index = 0;
-	}
+    // Make sure rx_index wraps
+    rx_index %= BUFFER_NUMBER;
 
-	while (pdTRUE) {
+	while (!done) {
 		// Wait for received data
 		while (receivedData == NULL);
-		// Save value
-		processData = receivedData;
-
 		// Do processing and add to transmit buffer
-		// FFT from rxBuffer to txBuffer
-		fftInst.ifftFlagR = ARM_FFT;
-//		arm_rfft_q15(&fftInst, processData, &txBuffer[tx_index]);
-		arm_copy_q15(processData, &txBuffer[tx_index], BUFFER_SIZE);
-
-		// Done with receive buffer, queue another
-		xfer.data = (uint8_t *)&rxBuffer[rx_index];
-		xfer.dataSize = BUFFER_SIZE;
-		rx_index += BUFFER_SIZE;
-		if (rx_index == BUFFER_SIZE * BUFFER_NUMBER) {
-			rx_index = 0;
-		}
-		SAI_TransferReceiveEDMA(BOARD_SAI_AC_PERIPHERAL, &BOARD_eDMA_AC_rxHandle, &xfer);
-
-		/* Reset receivedData */
+		receivedBuffer = receivedData;
 		receivedData = NULL;
 
-		// Do IFFT in-place
-//		arm_rfft_q15(&fftInst, &txBuffer[tx_index], &txBuffer[tx_index]);
+		// Convert from uint16_t to float going from rxBuffer to fftBuffer
+		arm_q15_to_float((q15_t *)receivedBuffer, fftBuffer, BUFFER_SIZE);
+
+		// Done with receive buffer, queue another
+		BOARD_eDMA_AC_rxHandle.userData = &dataPointers[rx_index];
+		xfer.data = (uint8_t *)&rxBuffer[rx_index*BUFFER_SIZE];
+		xfer.dataSize = BUFFER_SIZE*sizeof(int16_t);	// Size in bytes
+		rx_index = (rx_index + 1) % BUFFER_NUMBER;
+
+		SAI_TransferReceiveEDMA(BOARD_SAI_AC_PERIPHERAL, &BOARD_eDMA_AC_rxHandle, &xfer);
+		// FFT in-place
+		arm_rfft_fast_f32(&fftInst, fftBuffer, fftBuffer, ARM_FFT);
+		// IFFT in-place
+		arm_rfft_fast_f32(&fftInst, fftBuffer, fftBuffer, ARM_IFFT);
+		// Float to q15 from fftBuffer to txBuffer;
+		arm_float_to_q15(fftBuffer, (q15_t *)&txBuffer[tx_index*BUFFER_SIZE], BUFFER_SIZE);
 
 		// Put processed data on send queue
-		xfer.data = (uint8_t *)&txBuffer[tx_index];
-		xfer.dataSize = BUFFER_SIZE;
+		xfer.data = (uint8_t *)&txBuffer[tx_index*BUFFER_SIZE];
+		xfer.dataSize = BUFFER_SIZE*sizeof(int16_t);	// Size in bytes
+
 		/* Loop until queue has space */
 		while(SAI_TransferSendEDMA(BOARD_SAI_AC_PERIPHERAL, &BOARD_eDMA_AC_txHandle, &xfer) == kStatus_SAI_QueueFull);
-		tx_index += BUFFER_SIZE;
-		if (tx_index == BUFFER_SIZE * BUFFER_NUMBER) {
-			tx_index = 0;
-		}
+		tx_index += (tx_index + 1) % BUFFER_NUMBER;
 	}
 }
+
 
 void rxCallback(I2S_Type *base, sai_edma_handle_t *handle, status_t status, void *userData)
 {
 //	static Message_data msg;
-	if (status == kStatus_SAI_RxError) {
-		// deal with error
-	}
+	assert(status != kStatus_SAI_RxError);
 	// TODO: Need to deal with wrapping circular buffer here
 	/* Message queues too slow */
 //	msg.data = (int16_t *)handle->saiQueue[handle->queueDriver].data;
@@ -204,7 +166,7 @@ void rxCallback(I2S_Type *base, sai_edma_handle_t *handle, status_t status, void
 //		// Queue was full
 //		configASSERT(pdFALSE);
 //	}
-	receivedData = (int16_t *)handle->saiQueue[handle->queueDriver].data;
+	receivedData = *((volatile int16_t **)userData);
 }
 
 //void txCallback(I2S_Type *base, sai_edma_handle_t *handle, status_t status, void *userData)

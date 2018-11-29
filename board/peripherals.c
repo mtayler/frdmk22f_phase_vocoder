@@ -541,7 +541,7 @@ instance:
   - fsl_edma:
     - common_settings:
       - enableContinuousLinkMode: 'false'
-      - enableHaltOnError: 'true'
+      - enableHaltOnError: 'false'
       - enableRoundRobinArbitration: 'false'
       - enableDebugMode: 'false'
     - edma_channels: []
@@ -549,7 +549,7 @@ instance:
 /* clang-format on */
 const edma_config_t BOARD_eDMA_config = {
   .enableContinuousLinkMode = false,
-  .enableHaltOnError = true,
+  .enableHaltOnError = false,
   .enableRoundRobinArbitration = false,
   .enableDebugMode = false
 };
