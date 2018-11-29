@@ -60,6 +60,8 @@
 /* Function prototypes */
 void main(void) __SECTION(text, SRAM_UPPER);
 void rxCallback(I2S_Type *base, sai_edma_handle_t *handle, status_t status, void *userData) __RAMFUNC(SRAM_UPPER);
+void int16_packed_to_float(int16_t * pSrc, float32_t * pDst, uint32_t blockSize);
+void float_to_int16_packed(float32_t * pSrc, int16_t * pDst, uint32_t blockSize);
 
 /* Variable */
 extern codec_config_t boardCodecConfig;
@@ -68,6 +70,8 @@ extern codec_config_t boardCodecConfig;
 AT_NONCACHEABLE_SECTION_ALIGN(static int16_t rxBuffer[BUFFER_NUMBER*BUFFER_SIZE], 4) __BSS(SRAM_LOWER);
 AT_NONCACHEABLE_SECTION_ALIGN(static int16_t txBuffer[BUFFER_NUMBER*BUFFER_SIZE], 4) __BSS(SRAM_LOWER);
 AT_NONCACHEABLE_SECTION_ALIGN(static float32_t fftBuffer[FFT_BUFFER_SIZE], 4) __BSS(SRAM_UPPER);
+
+int16_t * dataPointers[BUFFER_NUMBER] = {0};
 
 volatile int16_t * receivedData = NULL;
 
@@ -97,14 +101,15 @@ void main(void) {
     SGTL_SetVolume(&codecHandle, kSGTL_ModuleHP, 0x20);
 
     // Init RFFT instance
-    arm_rfft_fast_init_f32(&fftInst, BUFFER_SIZE);
+    arm_rfft_fast_init_f32(&fftInst, BUFFER_SIZE >> 1U);
 
     // Start as many receives as we can
 	xfer.dataSize = BUFFER_SIZE*sizeof(int16_t);	// Size in bytes
+	BOARD_eDMA_AC_rxHandle.userData = dataPointers;
 	// Don't wrap rx_index here because we'll only go until we reach buffer size, and deal with it later
     for (size_t rx_index=0; rx_index < BUFFER_NUMBER; rx_index++) {
     	xfer.data = (uint8_t *)&rxBuffer[rx_index*BUFFER_SIZE];
-		BOARD_eDMA_AC_rxHandle.userData = (int16_t *)xfer.data;
+    	dataPointers[BOARD_eDMA_AC_rxHandle.queueUser] = &rxBuffer[rx_index*BUFFER_SIZE];
     	if (SAI_TransferReceiveEDMA(BOARD_SAI_AC_PERIPHERAL, &BOARD_eDMA_AC_rxHandle, &xfer) == kStatus_SAI_QueueFull) {
     		// If the receive queue is full, we've started as many as we can
     		break;
@@ -119,21 +124,24 @@ void main(void) {
 		receivedData = NULL;
 
 		// Convert from uint16_t to float going from rxBuffer to fftBuffer
-		arm_q15_to_float((q15_t *)receivedBuffer, fftBuffer, BUFFER_SIZE);
+		int16_packed_to_float(receivedBuffer, fftBuffer, BUFFER_SIZE);
 //		arm_copy_q15(receivedBuffer, &txBuffer[tx_index], BUFFER_SIZE);
 
 		// Done with receive buffer, queue another (finishes sequentially)
 		xfer.data = (uint8_t *)receivedBuffer;
 		xfer.dataSize = BUFFER_SIZE*sizeof(int16_t);	// Size in bytes
-		BOARD_eDMA_AC_rxHandle.userData = xfer.data;
+		dataPointers[BOARD_eDMA_AC_rxHandle.queueUser] = receivedBuffer;
 
 		SAI_TransferReceiveEDMA(BOARD_SAI_AC_PERIPHERAL, &BOARD_eDMA_AC_rxHandle, &xfer);
+
 		// FFT in-place
 		arm_rfft_fast_f32(&fftInst, fftBuffer, fftBuffer, ARM_FFT);
+		arm_rfft_fast_f32(&fftInst, &fftBuffer[FFT_BUFFER_SIZE >> 1U], &fftBuffer[FFT_BUFFER_SIZE >> 1U], ARM_FFT);
 		// IFFT in-place
 		arm_rfft_fast_f32(&fftInst, fftBuffer, fftBuffer, ARM_IFFT);
-		// Float to q15 from fftBuffer to txBuffer;
-		arm_float_to_q15(fftBuffer, (q15_t *)&txBuffer[tx_index*BUFFER_SIZE], BUFFER_SIZE);
+		arm_rfft_fast_f32(&fftInst, &fftBuffer[FFT_BUFFER_SIZE >> 1U], &fftBuffer[FFT_BUFFER_SIZE >> 1U], ARM_IFFT);
+		// Float to int16 from fftBuffer to txBuffer
+		float_to_int16_packed(fftBuffer, &txBuffer[tx_index*BUFFER_SIZE], BUFFER_SIZE);
 
 		// Put processed data on send queue
 		xfer.data = (uint8_t *)&txBuffer[tx_index*BUFFER_SIZE];
@@ -158,14 +166,134 @@ void rxCallback(I2S_Type *base, sai_edma_handle_t *handle, status_t status, void
 //		// Queue was full
 //		configASSERT(pdFALSE);
 //	}
-	receivedData = (volatile int16_t *)userData;
+	receivedData = ((volatile int16_t **)userData)[handle->queueUser];
 }
 
-//void txCallback(I2S_Type *base, sai_edma_handle_t *handle, status_t status, void *userData)
-//{
-//	if (status == kStatus_SAI_TxError) {
-//		// deal with error
-//	}
-//	// Tell send task there is more room on send queue
-//	vTaskNotifyGiveFromISR(taskHandle_sendData, NULL);
-//}
+
+void int16_packed_to_float(int16_t * pSrc, float32_t * pDst, uint32_t blockSize) {
+	int16_t *pIn = pSrc++;                           /* Src pointer and add 1 index to original */
+	uint32_t blkCnt;                               /* loop counter */
+
+
+	// Loop unroll from right channel
+	blkCnt = blockSize >> 3U;
+
+	// Compute 4 at a time
+	while(blkCnt > 0U)
+	{
+		/* C = (float32_t) A / 32768 */
+		/* convert from int16 to float and then store the results in the destination buffer */
+		*pDst++ = ((float32_t) *pIn); pIn += 2U;
+		*pDst++ = ((float32_t) *pIn); pIn += 2U;
+		*pDst++ = ((float32_t) *pIn); pIn += 2U;
+		*pDst++ = ((float32_t) *pIn); pIn += 2U;
+
+		// Decrement the loop counter
+		blkCnt--;
+	}
+
+	// Finish leftover
+	blkCnt = blockSize % 0x4u;
+
+	while(blkCnt > 0u)
+	{
+		/* C = (float32_t) A / 32768 */
+		/* convert from int16 to float and then store the results in the destination buffer */
+		*pDst++ = ((float32_t) *pIn); pIn += 2U;
+
+		// Decrement block count
+		blkCnt--;
+	}
+
+	// Loop unroll from left channel
+	blkCnt = (blockSize >> 3U) - 1;
+
+	// Compute 4 at a time, leftover at end
+	while(blkCnt > 0U)
+	{
+		/* C = (float32_t) A / 32768 */
+		/* convert from int16 to float and then store the results in the destination buffer */
+		*pDst++ = ((float32_t) *pSrc); pSrc += 2U;
+		*pDst++ = ((float32_t) *pSrc); pSrc += 2U;
+		*pDst++ = ((float32_t) *pSrc); pSrc += 2U;
+		*pDst++ = ((float32_t) *pSrc); pSrc += 2U;
+
+		// Decrement block count
+		blkCnt--;
+	}
+
+	// Finish leftover
+	blkCnt = blockSize % 0x4u;
+
+	while(blkCnt > 0u)
+	{
+		/* C = (float32_t) A / 32768 */
+		/* convert from int16 to float and then store the results in the destination buffer */
+		*pDst++ = ((float32_t) *pSrc); pSrc += 2U;
+
+		// Decrement block count
+		blkCnt--;
+	}
+}
+
+void float_to_int16_packed(float32_t * pSrc, int16_t * pDst, uint32_t blockSize) {
+	int16_t *pOut = pDst++;                        /* Dst pointer and add 1 index to original */
+	uint32_t blkCnt;                               /* loop counter */
+
+	// Loop unroll to right channel
+	blkCnt = blockSize >> 3u;
+
+	/* Process first set of packed values */
+	/* First part of the processing with loop unrolling.  Compute 4 outputs at a time.
+	 ** a second loop below computes the remaining 1 to 3 samples. */
+	while(blkCnt > 0u)
+	{
+		/* C = A * 32768 */
+		/* convert from float to int16 and then store the results in the destination buffer */
+		*pOut = (int16_t)(*pSrc++); pOut += 2U;
+		*pOut = (int16_t)(*pSrc++); pOut += 2U;
+		*pOut = (int16_t)(*pSrc++); pOut += 2U;
+		*pOut = (int16_t)(*pSrc++); pOut += 2U;
+
+		/* Decrement the loop counter */
+		blkCnt--;
+	}
+	while (blkCnt > 0u) {
+
+		/* C = A * 32768 */
+		/* convert from float to int16 and then store the results in the destination buffer */
+		*pOut = (int16_t)(*pSrc++); pOut += 2U;
+
+		/* Decrement the loop counter */
+		blkCnt--;
+	}
+
+	// Loop unroll to left channel
+	blkCnt = (blockSize >> 3U) - 1;
+
+	/* Process second set of packed values */
+	/* First part of the processing with loop unrolling.  Compute 4 outputs at a time.
+	 ** a second loop below computes the remaining 1 to 3 samples. */
+	while(blkCnt > 0u)
+	{
+		/* C = A * 32768 */
+		/* convert from float to int16 and then store the results in the destination buffer */
+		*pDst = (int16_t)(*pSrc++); pOut += 2U;
+		*pDst = (int16_t)(*pSrc++); pOut += 2U;
+		*pDst = (int16_t)(*pSrc++); pOut += 2U;
+		*pDst = (int16_t)(*pSrc++); pOut += 2U;
+
+		/* Decrement the loop counter */
+		blkCnt--;
+	}
+	while(blkCnt > 0u)
+	{
+
+		/* C = A * 32768 */
+		/* convert from float to int16 and then store the results in the destination buffer */
+		*pDst = (int16_t)(*pSrc++); pOut += 2U;
+
+		/* Decrement the loop counter */
+		blkCnt--;
+	}
+}
