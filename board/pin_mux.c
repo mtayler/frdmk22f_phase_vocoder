@@ -96,6 +96,7 @@ pin_labels:
  * END ****************************************************************************************************************/
 void BOARD_InitBootPins(void)
 {
+    BOARD_InitButtons();
     BOARD_InitDEBUG_UART();
     BOARD_InitAudioPins();
 }
@@ -226,10 +227,10 @@ void BOARD_InitLEDs(void)
 /*
  * TEXT BELOW IS USED AS SETTING FOR TOOLS *************************************
 BOARD_InitButtons:
-- options: {callFromInitBoot: 'false', prefix: BOARD_, coreID: core0, enableClock: 'true'}
+- options: {callFromInitBoot: 'true', prefix: BOARD_, coreID: core0, enableClock: 'true'}
 - pin_list:
-  - {pin_num: '40', peripheral: GPIOB, signal: 'GPIO, 17', pin_signal: PTB17/SPI1_SIN/UART0_TX/FTM_CLKIN1/FB_AD16/EWM_OUT_b, direction: INPUT, slew_rate: fast, open_drain: disable,
-    pull_select: up, pull_enable: enable}
+  - {pin_num: '40', peripheral: GPIOB, signal: 'GPIO, 17', pin_signal: PTB17/SPI1_SIN/UART0_TX/FTM_CLKIN1/FB_AD16/EWM_OUT_b, direction: INPUT, gpio_interrupt: kPORT_InterruptFallingEdge,
+    slew_rate: fast, open_drain: disable, pull_select: up, pull_enable: enable}
   - {pin_num: '44', peripheral: GPIOC, signal: 'GPIO, 1', pin_signal: ADC0_SE15/PTC1/LLWU_P6/SPI0_PCS3/UART1_RTS_b/FTM0_CH0/FB_AD13/I2S0_TXD0/LPUART0_RTS_b, direction: INPUT,
     slew_rate: fast, open_drain: disable, pull_select: up, pull_enable: enable}
  * BE CAREFUL MODIFYING THIS COMMENT - IT IS YAML SETTINGS FOR TOOLS ***********
@@ -279,6 +280,9 @@ void BOARD_InitButtons(void)
                                    kPORT_UnlockRegister};
     /* PORTB17 (pin 40) is configured as PTB17 */
     PORT_SetPinConfig(BOARD_SW3_PORT, BOARD_SW3_PIN, &SW3);
+
+    /* Interrupt configuration on PORTB17 (pin 40): Interrupt on falling edge */
+    PORT_SetPinInterruptConfig(BOARD_SW3_PORT, BOARD_SW3_PIN, kPORT_InterruptFallingEdge);
 
     const port_pin_config_t SW2 = {/* Internal pull-up resistor is enabled */
                                    kPORT_PullUp,

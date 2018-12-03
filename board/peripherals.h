@@ -32,8 +32,12 @@ extern "C" {
 /* Definitions for BOARD_InitBUTTONsPeripheral functional group */
 /* Alias for GPIOB peripheral */
 #define BOARD_SW3_GPIO GPIOB
-/* Alias for GPIOC peripheral */
-#define BOARD_SW2_GPIO GPIOC
+/* Alias for PORTB */
+#define BOARD_SW3_PORT PORTB
+/* SW3 interrupt vector ID (number). */
+#define BOARD_SW3_IRQN PORTB_IRQn
+/* SW3 interrupt handler identifier. */
+#define BOARD_SW3_IRQHANDLER PORTB_IRQHandler
 
 /* Definitions for BOARD_InitLEDsPeripheral functional group */
 /* Alias for GPIOD peripheral */

@@ -50,6 +50,7 @@
 #define BOARD_I2C_AC_ADDR (0b0001010)
 #define BUFFER_SIZE (4096U)
 #define BUFFER_NUMBER (4U)
+#define FFT_SIZE BUFFER_SIZE >> 1U
 #define FFT_BUFFER_SIZE (BUFFER_SIZE*2)
 
 #define M_PI (3.14159265359f)
@@ -62,9 +63,11 @@
 
 /* Function prototypes */
 void main(void) __SECTION(text, SRAM_UPPER);
+__STATIC_INLINE void effectWhisper(float32_t * fftBuffer);
+__STATIC_INLINE void effectRobot(float32_t * fftBuffer);
 void rxCallback(I2S_Type *base, sai_edma_handle_t *handle, status_t status, void *userData) __RAMFUNC(SRAM_UPPER);
-void int16_packed_to_float(int16_t * pSrc, float32_t * pDst, uint32_t blockSize);
-void float_to_int16_packed(float32_t * pSrc, int16_t * pDst, uint32_t blockSize);
+__STATIC_INLINE void int16_packed_to_float(int16_t * pSrc, float32_t * pDst, uint32_t blockSize);
+__STATIC_INLINE void float_to_int16_packed(float32_t * pSrc, int16_t * pDst, uint32_t blockSize);
 
 /* Variable */
 extern codec_config_t boardCodecConfig;
@@ -74,21 +77,33 @@ AT_NONCACHEABLE_SECTION_ALIGN(static int16_t rxBuffer[BUFFER_NUMBER*BUFFER_SIZE]
 AT_NONCACHEABLE_SECTION_ALIGN(static int16_t txBuffer[BUFFER_NUMBER*BUFFER_SIZE], 4) __BSS(SRAM_LOWER);
 AT_NONCACHEABLE_SECTION_ALIGN(static float32_t fftBuffer[FFT_BUFFER_SIZE], 4) __BSS(SRAM_UPPER);
 
-int16_t * dataPointers[BUFFER_NUMBER] = {0};
+//static int16_t * dataPointers[BUFFER_NUMBER] = {0};
 
-volatile int16_t * receivedData = NULL;
+static arm_rfft_fast_instance_f32 fftInst;
+
+static volatile int16_t * receivedData = NULL;
+
+typedef enum _effect_setting {
+	effectSettingNone = 0,
+	effectSettingWhisper,
+	effectSettingRobot,
+	effectSettingNumber
+} effect_setting_t;
+
+static volatile effect_setting_t effectSetting = effectSettingNone;
 
 /*
  * @brief   Application entry point.
  */
 void main(void) {
-	codec_handle_t codecHandle = {0};
-	sai_transfer_t xfer;
-	arm_rfft_fast_instance_f32 fftInst;
-	volatile bool done = false;
-	int16_t * receivedBuffer;	// Used to save receivedData to prevent it changing while being used
-
+	codec_handle_t codecHandle = {0};	// Audio codec handle
+	sai_transfer_t xfer;				// SAI transfer settings
+	volatile bool done = false;			// Make sure our infinite loop doesn't get optimized
+	int16_t * receivedBuffer;			// Used to save receivedData to prevent it changing while being used
+	effect_setting_t prevEffect;		// Store previous effect to print new effect on a change
 	size_t tx_index = 0;
+
+	prevEffect = effectSettingNone;
 
   	/* Init board hardware. */
     BOARD_InitBootPins();
@@ -98,21 +113,22 @@ void main(void) {
     BOARD_InitDebugConsole();
     /* Init audio codec */
     BOARD_InitAUDIOPeripheral();
+    /* Init SW3 push button */
+    BOARD_InitBUTTONsPeripheral();
     /* Init codec */
     CODEC_Init(&codecHandle, &boardCodecConfig);
     CODEC_SetFormat(&codecHandle, BOARD_SAI_AC_RX_MCLK_SOURCE_CLOCK_HZ, BOARD_SAI_AC_rx_format.sampleRate_Hz, BOARD_SAI_AC_rx_format.bitWidth);
-    SGTL_SetVolume(&codecHandle, kSGTL_ModuleHP, 0x30);
+    SGTL_SetVolume(&codecHandle, kSGTL_ModuleHP, 0x28);
 
     // Init RFFT instance
-    arm_rfft_fast_init_f32(&fftInst, BUFFER_SIZE >> 1U);
+    arm_rfft_fast_init_f32(&fftInst, FFT_SIZE);
 
     // Start as many receives as we can
 	xfer.dataSize = BUFFER_SIZE*sizeof(int16_t);	// Size in bytes
-	BOARD_eDMA_AC_rxHandle.userData = dataPointers;
+
 	// Don't wrap rx_index here because we'll only go until we reach buffer size, and deal with it later
     for (size_t rx_index=0; rx_index < BUFFER_NUMBER; rx_index++) {
     	xfer.data = (uint8_t *)&rxBuffer[rx_index*BUFFER_SIZE];
-    	dataPointers[BOARD_eDMA_AC_rxHandle.queueUser] = &rxBuffer[rx_index*BUFFER_SIZE];
     	if (SAI_TransferReceiveEDMA(BOARD_SAI_AC_PERIPHERAL, &BOARD_eDMA_AC_rxHandle, &xfer) == kStatus_SAI_QueueFull) {
     		// If the receive queue is full, we've started as many as we can
     		break;
@@ -129,24 +145,42 @@ void main(void) {
 
 		// Convert from uint16_t to float going from rxBuffer to fftBuffer
 		int16_packed_to_float(receivedBuffer, fftBuffer, BUFFER_SIZE);
-//		arm_copy_q15(receivedBuffer, &txBuffer[tx_index], BUFFER_SIZE);
+//		arm_copy_q15(receivedBuffer, &txBuffer[tx_index*BUFFER_SIZE], BUFFER_SIZE);
 
 		// Done with receive buffer, queue another (finishes sequentially)
 		xfer.data = (uint8_t *)receivedBuffer;
 		xfer.dataSize = BUFFER_SIZE*sizeof(int16_t);	// Size in bytes
-		dataPointers[BOARD_eDMA_AC_rxHandle.queueUser] = receivedBuffer;
 
 		SAI_TransferReceiveEDMA(BOARD_SAI_AC_PERIPHERAL, &BOARD_eDMA_AC_rxHandle, &xfer);
 
-		// FFT in-place
-		arm_rfft_fast_f32(&fftInst, fftBuffer, fftBuffer, ARM_FFT);
-		arm_rfft_fast_f32(&fftInst, &fftBuffer[FFT_BUFFER_SIZE >> 1U], &fftBuffer[FFT_BUFFER_SIZE >> 1U], ARM_FFT);
-		for (size_t i=1; i < BUFFER_SIZE; i+=2) {
-			fftBuffer[i] = (float)rand()/(float)(RAND_MAX/(2*M_PI));
+		// Apply effect
+		if (effectSetting != prevEffect) {
+			prevEffect = effectSetting;
+			switch (effectSetting) {
+				case effectSettingWhisper:
+					printf("Whisperization effect\n");
+					break;
+				case effectSettingRobot:
+					printf("Robotization effect\n");
+					break;
+				case effectSettingNone:
+					printf("No effect\n");
+				default:
+					break;
+			}
 		}
-		// IFFT in-place
-		arm_rfft_fast_f32(&fftInst, fftBuffer, fftBuffer, ARM_IFFT);
-		arm_rfft_fast_f32(&fftInst, &fftBuffer[FFT_BUFFER_SIZE >> 1U], &fftBuffer[FFT_BUFFER_SIZE >> 1U], ARM_IFFT);
+		switch (effectSetting) {
+			case effectSettingWhisper:
+				effectWhisper(fftBuffer);
+				break;
+			case effectSettingRobot:
+				effectRobot(fftBuffer);
+				break;
+			case effectSettingNone:
+			default:
+				break;
+		}
+
 		// Float to int16 from fftBuffer to txBuffer
 		float_to_int16_packed(fftBuffer, &txBuffer[tx_index*BUFFER_SIZE], BUFFER_SIZE);
 
@@ -160,30 +194,56 @@ void main(void) {
 	}
 }
 
+__STATIC_INLINE inline void effectWhisper(float32_t * fftBuffer) {
+	// FFT for both channels in-place
+	arm_rfft_fast_f32(&fftInst, fftBuffer, fftBuffer, ARM_FFT);
+	arm_rfft_fast_f32(&fftInst, &fftBuffer[FFT_BUFFER_SIZE >> 1U], &fftBuffer[FFT_BUFFER_SIZE >> 1U], ARM_FFT);
+	for (size_t i=1; i < FFT_BUFFER_SIZE; i+=2) {
+		fftBuffer[i] = (float)rand()/(float)(RAND_MAX/(2*M_PI));
+	}
+	// IFFT for both channels in-place
+	arm_rfft_fast_f32(&fftInst, fftBuffer, fftBuffer, ARM_IFFT);
+	arm_rfft_fast_f32(&fftInst, &fftBuffer[FFT_BUFFER_SIZE >> 1U], &fftBuffer[FFT_BUFFER_SIZE >> 1U], ARM_IFFT);
+}
+
+__STATIC_INLINE inline void effectRobot(float32_t * fftBuffer) {
+	// FFT for both channels in-place
+	arm_rfft_fast_f32(&fftInst, fftBuffer, fftBuffer, ARM_FFT);
+	arm_rfft_fast_f32(&fftInst, &fftBuffer[FFT_BUFFER_SIZE >> 1U], &fftBuffer[FFT_BUFFER_SIZE >> 1U], ARM_FFT);
+	for (size_t i=1; i < FFT_BUFFER_SIZE; i+=2) {
+		fftBuffer[i] = 0;
+	}
+	// IFFT for both channels in-place
+	arm_rfft_fast_f32(&fftInst, fftBuffer, fftBuffer, ARM_IFFT);
+	arm_rfft_fast_f32(&fftInst, &fftBuffer[FFT_BUFFER_SIZE >> 1U], &fftBuffer[FFT_BUFFER_SIZE >> 1U], ARM_IFFT);
+}
+
 
 void rxCallback(I2S_Type *base, sai_edma_handle_t *handle, status_t status, void *userData)
 {
-//	static Message_data msg;
 	assert(status != kStatus_SAI_RxError);
-	// TODO: Need to deal with wrapping circular buffer here
-	/* Message queues too slow */
-//	msg.data = (int16_t *)handle->saiQueue[handle->queueDriver].data;
-//	msg.dataSize = handle->transferSize[handle->queueDriver];
-//	if (! xQueueSendToBackFromISR(processQueue, &msg, NULL)) {
-//		// Queue was full
-//		configASSERT(pdFALSE);
-//	}
-	receivedData = ((volatile int16_t **)userData)[handle->queueUser];
+	receivedData = (volatile int16_t *)handle->dmaHandle->tcdPool->DADDR;
+#if defined __CORTEX_M && (__CORTEX_M == 4U)
+    __DSB();
+#endif
+}
+
+void BOARD_SW3_IRQHANDLER(void) {
+    GPIO_PortClearInterruptFlags(BOARD_SW3_GPIO, 1U << BOARD_SW3_GPIO_PIN);
+	effectSetting = (effectSetting + 1) % effectSettingNumber;
+#if defined __CORTEX_M && (__CORTEX_M == 4U)
+    __DSB();
+#endif
 }
 
 
 // Convert (int16_t) LRLRLRLR.... to (float32_t) LLLL...RRRR...
-void int16_packed_to_float(int16_t * pSrc, float32_t * pDst, uint32_t blockSize) {
-	int16_t *pIn = pSrc++;                           /* Src pointer and add 1 index to original */
+__STATIC_INLINE void int16_packed_to_float(int16_t * pSrc, float32_t * pDst, uint32_t blockSize) {
+	int16_t *pIn = pSrc++;                         /* Src pointer and add 1 index to original */
 	uint32_t blkCnt;                               /* loop counter */
 
 
-	// Loop unroll from right channel
+	// Loop unroll from left channel (going up by 2 and loop unroll 4, so 1/8 of iterations)
 	blkCnt = blockSize >> 3U;
 
 	// Compute 4 at a time
@@ -201,7 +261,7 @@ void int16_packed_to_float(int16_t * pSrc, float32_t * pDst, uint32_t blockSize)
 	}
 
 	// Finish leftover
-	blkCnt = blockSize % 0x4u;
+	blkCnt = blockSize % 0x8u;
 
 	while(blkCnt > 0u)
 	{
@@ -213,8 +273,8 @@ void int16_packed_to_float(int16_t * pSrc, float32_t * pDst, uint32_t blockSize)
 		blkCnt--;
 	}
 
-	// Loop unroll from left channel
-	blkCnt = (blockSize >> 3U) - 1;
+	// Loop unroll from right channel (going up by 2 and loop unroll 4, so 1/8 of iterations)
+	blkCnt = (blockSize >> 3U);
 
 	// Compute 4 at a time, leftover at end
 	while(blkCnt > 0U)
@@ -232,7 +292,6 @@ void int16_packed_to_float(int16_t * pSrc, float32_t * pDst, uint32_t blockSize)
 
 	// Finish leftover
 	blkCnt = blockSize % 0x4u;
-
 	while(blkCnt > 0u)
 	{
 		/* C = (float32_t) A / 32768 */
@@ -245,11 +304,11 @@ void int16_packed_to_float(int16_t * pSrc, float32_t * pDst, uint32_t blockSize)
 }
 
 // Convert (float32_t) LLLL...RRRR... to (int16_t) LRLRLRLR....
-void float_to_int16_packed(float32_t * pSrc, int16_t * pDst, uint32_t blockSize) {
+__STATIC_INLINE void float_to_int16_packed(float32_t * pSrc, int16_t * pDst, uint32_t blockSize) {
 	int16_t *pOut = pDst++;                        /* Dst pointer and add 1 index to original */
 	uint32_t blkCnt;                               /* loop counter */
 
-	// Loop unroll to right channel
+	// Loop unroll to left channel (going up by 2 and loop unroll 4, so 1/8 of iterations)
 	blkCnt = blockSize >> 3u;
 
 	/* Process first set of packed values */
@@ -267,6 +326,9 @@ void float_to_int16_packed(float32_t * pSrc, int16_t * pDst, uint32_t blockSize)
 		/* Decrement the loop counter */
 		blkCnt--;
 	}
+
+	// Finish leftover
+	blkCnt = blockSize % 0x4u;
 	while (blkCnt > 0u) {
 
 		/* C = A * 32768 */
@@ -277,8 +339,8 @@ void float_to_int16_packed(float32_t * pSrc, int16_t * pDst, uint32_t blockSize)
 		blkCnt--;
 	}
 
-	// Loop unroll to left channel
-	blkCnt = (blockSize >> 3U) - 1;
+	// Loop unroll to right channel (going up by 2 and loop unroll 4, so 1/8 of iterations)
+	blkCnt = (blockSize >> 3U);
 
 	/* Process second set of packed values */
 	/* First part of the processing with loop unrolling.  Compute 4 outputs at a time.
@@ -295,6 +357,9 @@ void float_to_int16_packed(float32_t * pSrc, int16_t * pDst, uint32_t blockSize)
 		/* Decrement the loop counter */
 		blkCnt--;
 	}
+
+	// Finish leftover
+	blkCnt = blockSize % 0x4u;
 	while(blkCnt > 0u)
 	{
 
