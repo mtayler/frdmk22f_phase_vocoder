@@ -40,6 +40,7 @@
 #include "MK22F51212.h"
 #include "fsl_debug_console.h"
 /* TODO: insert other include files here. */
+#include "fsl_sgtl5000.h"
 
 /* TODO: insert other definitions and declarations here. */
 
