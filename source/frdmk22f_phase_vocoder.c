@@ -42,7 +42,13 @@
 /* TODO: insert other include files here. */
 #include "fsl_sgtl5000.h"
 
-/* TODO: insert other definitions and declarations here. */
+/* Defines */
+
+/* Prototypes */
+
+/* Variables */
+codec_handle_t codecHandle = {0};
+extern codec_config_t boardCodecConfig;
 
 /*
  * @brief   Application entry point.
@@ -55,8 +61,21 @@ int main(void) {
     BOARD_InitBootPeripherals();
   	/* Init FSL debug console. */
     BOARD_InitDebugConsole();
+    /* Init push buttons */
+    BOARD_InitBUTTONsPeripheral();
+    /* Init LED peripheral */
+    BOARD_InitLEDsPeripheral();
+    /* Init audio codec chip */
+    BOARD_InitAUDIOPeripheral();
+    BOARD_Codec_I2C_Init();
 
-    PRINTF("Hello World\n");
+    /* Use default setting to init codec */
+    CODEC_Init(&codecHandle, &boardCodecConfig);
+    CODEC_SetFormat(&codecHandle, SAI_AC_rx_format.masterClockHz, SAI_AC_rx_format.sampleRate_Hz, SAI_AC_rx_format.bitWidth);
+
+    /* Set headphone volume */
+    SGTL_SetVolume(&codecHandle, kSGTL_ModuleHP, 0x28);
+
 
     /* Force the counter to be placed into memory. */
     volatile static int i = 0 ;
@@ -66,3 +85,9 @@ int main(void) {
     }
     return 0 ;
 }
+
+void SAI_eDMA_rxCallback(I2S_Type *base, sai_edma_handle_t *handle, status_t status, void *userData) {
+	assert(status != kStatus_SAI_RxError);
+	// do something
+}
+
